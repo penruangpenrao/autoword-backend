@@ -52,7 +52,6 @@ def index():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    from docx.oxml.ns import qn
     file = request.files.get('file')
     if not file:
         return jsonify({'error': 'ไม่พบไฟล์'}), 400
@@ -60,59 +59,25 @@ def analyze():
     doc = docx.Document(file)
     normalize_red_runs(doc)
 
-    W_NS  = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-    nsmap = {'w': W_NS}
-    W_BODY = qn('w:body')
+    red_texts = []
+    seen = set()
 
-    # ── Step 1: คำนวณหมายเลขหน้าของแต่ละ element ลูกตรงๆ ของ body ──
-    current_page = 1
-    body_el_page = {}  # id(element) -> หน้าที่ element นั้นเริ่มต้น
-
-    for body_child in doc.element.body:
-        body_el_page[id(body_child)] = current_page
-        pbreaks = body_child.xpath(
-            './/w:lastRenderedPageBreak | .//w:br[@w:type="page"]',
-            namespaces=nsmap
-        )
-        current_page += len(pbreaks)
-
-    # ── Step 2: หา page ของ paragraph โดย walk-up ขึ้นไปถึง body level ──
-    def page_of(para):
-        el = para._element
-        while el is not None:
-            parent = el.getparent()
-            if parent is not None and parent.tag == W_BODY:
-                return body_el_page.get(id(el), 1)
-            el = parent
-        return 1
-
-    # ── Step 3: ดึงคำสีแดงพร้อม page ใช้ is_reddish() เดิมที่พิสูจน์แล้ว ──
-    word_pages = {}
-    seen_order = []
-
-    def extract(paragraphs):
+    def extract_from_paragraphs(paragraphs):
         for p in paragraphs:
-            pg = page_of(p)
             for run in p.runs:
                 if is_reddish(run):
                     text = run.text.strip()
-                    if text:
-                        if text not in word_pages:
-                            word_pages[text] = set()
-                            seen_order.append(text)
-                        word_pages[text].add(pg)
+                    if text and text not in seen:
+                        seen.add(text)
+                        red_texts.append(text)
 
-    extract(doc.paragraphs)
+    extract_from_paragraphs(doc.paragraphs)
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                extract(cell.paragraphs)
+                extract_from_paragraphs(cell.paragraphs)
 
-    result = [
-        {'word': w, 'pages': sorted(word_pages[w])}
-        for w in seen_order
-    ]
-    return jsonify({'words': result})
+    return jsonify({'words': red_texts})
 
 @app.route('/generate', methods=['POST'])
 def generate():
