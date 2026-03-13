@@ -60,48 +60,53 @@ def analyze():
     doc = docx.Document(file)
     normalize_red_runs(doc)
 
-    W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    W_NS  = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
     nsmap = {'w': W_NS}
+    W_BODY = qn('w:body')
 
-    word_pages = {}  # { word_text: set(page_numbers) }
-    seen_order = []  # เก็บลำดับที่พบคำแต่ละคำครั้งแรก
+    # ── Step 1: คำนวณหมายเลขหน้าของแต่ละ element ลูกตรงๆ ของ body ──
     current_page = 1
+    body_el_page = {}  # id(element) -> หน้าที่ element นั้นเริ่มต้น
 
-    for element in doc.element.body:
-        # นับ page break ใน element นี้ก่อน
-        page_breaks = element.xpath(
+    for body_child in doc.element.body:
+        body_el_page[id(body_child)] = current_page
+        pbreaks = body_child.xpath(
             './/w:lastRenderedPageBreak | .//w:br[@w:type="page"]',
             namespaces=nsmap
         )
-        current_page += len(page_breaks)
+        current_page += len(pbreaks)
 
-        # ดึงทุก run ใน element นี้
-        for run_el in element.xpath('.//w:r', namespaces=nsmap):
-            rPr = run_el.find(qn('w:rPr'))
-            if rPr is None:
-                continue
-            color_node = rPr.find(qn('w:color'))
-            if color_node is None:
-                continue
-            # ใช้ Clark notation เพื่อ get attribute w:val
-            val = color_node.get('{%s}val' % W_NS, '')
-            if not val or val.upper() == 'AUTO' or len(val) != 6:
-                continue
-            try:
-                r = int(val[0:2], 16)
-                g = int(val[2:4], 16)
-                b = int(val[4:6], 16)
-            except ValueError:
-                continue
-            if r > 130 and g < 100 and b < 100:
-                t_el = run_el.find(qn('w:t'))
-                if t_el is not None:
-                    text = (t_el.text or '').strip()
+    # ── Step 2: หา page ของ paragraph โดย walk-up ขึ้นไปถึง body level ──
+    def page_of(para):
+        el = para._element
+        while el is not None:
+            parent = el.getparent()
+            if parent is not None and parent.tag == W_BODY:
+                return body_el_page.get(id(el), 1)
+            el = parent
+        return 1
+
+    # ── Step 3: ดึงคำสีแดงพร้อม page ใช้ is_reddish() เดิมที่พิสูจน์แล้ว ──
+    word_pages = {}
+    seen_order = []
+
+    def extract(paragraphs):
+        for p in paragraphs:
+            pg = page_of(p)
+            for run in p.runs:
+                if is_reddish(run):
+                    text = run.text.strip()
                     if text:
                         if text not in word_pages:
                             word_pages[text] = set()
                             seen_order.append(text)
-                        word_pages[text].add(current_page)
+                        word_pages[text].add(pg)
+
+    extract(doc.paragraphs)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                extract(cell.paragraphs)
 
     result = [
         {'word': w, 'pages': sorted(word_pages[w])}
