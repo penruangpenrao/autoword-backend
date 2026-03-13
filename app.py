@@ -52,6 +52,7 @@ def index():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
+    from docx.oxml.ns import qn
     file = request.files.get('file')
     if not file:
         return jsonify({'error': 'ไม่พบไฟล์'}), 400
@@ -59,55 +60,48 @@ def analyze():
     doc = docx.Document(file)
     normalize_red_runs(doc)
 
-    # namespace สำหรับ xpath
-    nsmap = {
-        'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-    }
+    W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    nsmap = {'w': W_NS}
 
-    word_pages = {}   # { word_text: set(page_numbers) }
-    seen_order = []   # เก็บลำดับที่พบคำแต่ละคำครั้งแรก
+    word_pages = {}  # { word_text: set(page_numbers) }
+    seen_order = []  # เก็บลำดับที่พบคำแต่ละคำครั้งแรก
     current_page = 1
 
     for element in doc.element.body:
-        # นับ page break ที่อยู่ใน element นี้
+        # นับ page break ใน element นี้ก่อน
         page_breaks = element.xpath(
             './/w:lastRenderedPageBreak | .//w:br[@w:type="page"]',
             namespaces=nsmap
         )
         current_page += len(page_breaks)
 
-        # ดึงคำสีแดงจาก element นี้
-        runs = element.xpath('.//w:r', namespaces=nsmap)
-        for run_el in runs:
-            # ตรวจสอบสีแดงผ่าน run object
-            # สร้าง run wrapper เพื่อใช้ฟังก์ชัน is_reddish
-            from docx.oxml.ns import qn
-            color_el = run_el.find(
-                './/' + qn('w:color'), run_el.nsmap
-            ) if hasattr(run_el, 'nsmap') else None
-
-            # ตรวจสีจาก XML โดยตรง
+        # ดึงทุก run ใน element นี้
+        for run_el in element.xpath('.//w:r', namespaces=nsmap):
             rPr = run_el.find(qn('w:rPr'))
-            if rPr is not None:
-                color_node = rPr.find(qn('w:color'))
-                if color_node is not None:
-                    val = color_node.get(qn('w:val'), '')
-                    if val and val.upper() != 'AUTO' and len(val) == 6:
-                        try:
-                            r = int(val[0:2], 16)
-                            g = int(val[2:4], 16)
-                            b = int(val[4:6], 16)
-                            if r > 130 and g < 100 and b < 100:
-                                t_el = run_el.find(qn('w:t'))
-                                if t_el is not None:
-                                    text = (t_el.text or '').strip()
-                                    if text:
-                                        if text not in word_pages:
-                                            word_pages[text] = set()
-                                            seen_order.append(text)
-                                        word_pages[text].add(current_page)
-                        except ValueError:
-                            pass
+            if rPr is None:
+                continue
+            color_node = rPr.find(qn('w:color'))
+            if color_node is None:
+                continue
+            # ใช้ Clark notation เพื่อ get attribute w:val
+            val = color_node.get('{%s}val' % W_NS, '')
+            if not val or val.upper() == 'AUTO' or len(val) != 6:
+                continue
+            try:
+                r = int(val[0:2], 16)
+                g = int(val[2:4], 16)
+                b = int(val[4:6], 16)
+            except ValueError:
+                continue
+            if r > 130 and g < 100 and b < 100:
+                t_el = run_el.find(qn('w:t'))
+                if t_el is not None:
+                    text = (t_el.text or '').strip()
+                    if text:
+                        if text not in word_pages:
+                            word_pages[text] = set()
+                            seen_order.append(text)
+                        word_pages[text].add(current_page)
 
     result = [
         {'word': w, 'pages': sorted(word_pages[w])}
