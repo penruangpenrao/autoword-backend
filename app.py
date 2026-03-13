@@ -1,22 +1,13 @@
-from flask import Flask, request, send_file, render_template, jsonify
-from flask_cors import CORS # <--- 1. เพิ่มบรรทัดนี้
+from flask import Flask, request, send_file, jsonify
+from flask_cors import CORS
 import docx
 from docx.shared import RGBColor
 import io
 import json
 
 app = Flask(__name__)
-CORS(app) # <--- 2. เพิ่มบรรทัดนี้ (อนุญาตให้ทุกเว็บส่งข้อมูลมาได้)
-
-# ... (โค้ดส่วนที่เหลือปล่อยไว้เหมือนเดิมเป๊ะเลยครับ) ...
-
-from flask import Flask, request, send_file, render_template, jsonify
-import docx
-from docx.shared import RGBColor
-import io
-import json
-
-app = Flask(__name__)
+# เปิดประตู CORS อนุญาตให้หน้าเว็บจาก Cloudflare เข้ามาคุยได้ 100%
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # 1. ฟังก์ชันเช็คสีแดง
 def is_reddish(run):
@@ -32,22 +23,20 @@ def is_reddish(run):
             pass
     return False
 
-# 2. ฟังก์ชันกาววิเศษ (รวมคำสีแดงที่อยู่ติดกันให้เป็นประโยคเดียว)
+# 2. ฟังก์ชันกาววิเศษ
 def normalize_red_runs(doc):
     def _normalize_paragraph(p):
         first_red_run = None
         for run in p.runs:
             if is_reddish(run):
                 if first_red_run is None:
-                    first_red_run = run # เจอสีแดงก้อนแรก ให้จำไว้
+                    first_red_run = run
                 else:
-                    # เจอสีแดงก้อนถัดมา เอาข้อความมาต่อท้ายก้อนแรก แล้วลบก้อนนี้ทิ้ง
                     first_red_run.text += run.text
                     run.text = ""
             else:
-                first_red_run = None # ถ้าเจอสีดำ ให้ตัดจบการรวมร่าง
+                first_red_run = None
 
-    # วนลูปติดกาวให้ทุกย่อหน้าและทุกตาราง
     for p in doc.paragraphs:
         _normalize_paragraph(p)
     for table in doc.tables:
@@ -58,7 +47,7 @@ def normalize_red_runs(doc):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return jsonify({"status": "API is running!"}) 
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -67,7 +56,7 @@ def analyze():
         return jsonify({'error': 'ไม่พบไฟล์'}), 400
     
     doc = docx.Document(file)
-    normalize_red_runs(doc) # <--- สั่งรวมคำก่อนดึงข้อมูลไปแสดงหน้าเว็บ
+    normalize_red_runs(doc)
     
     red_texts = [] 
     seen = set()
@@ -100,7 +89,7 @@ def generate():
     replacements = json.loads(replacements_json)
     doc = docx.Document(file)
     
-    normalize_red_runs(doc) # <--- สั่งรวมคำก่อนทำการแก้คำด้วย
+    normalize_red_runs(doc)
 
     def replace_and_recolor(paragraphs, replacements):
         for p in paragraphs:
@@ -109,11 +98,9 @@ def generate():
                     original = run.text.strip()
                     if original in replacements:
                         new_text = replacements[original]
-                        # ถ้าช่องกรอกข้อมูลไม่ว่างเปล่า ให้แทนที่คำและเปลี่ยนเป็นสีดำ
                         if new_text != "": 
                             run.text = run.text.replace(original, new_text)
                             run.font.color.rgb = RGBColor(0, 0, 0)
-                        # ถ้าเป็นค่าว่าง โค้ดจะข้ามไปและปล่อยให้เป็นสีแดงตามเดิม
                         
     replace_and_recolor(doc.paragraphs, replacements)
     for table in doc.tables:
@@ -128,7 +115,7 @@ def generate():
     return send_file(
         bio,
         as_attachment=True,
-        download_name='เอกสาร_อัตโนมัติ.docx',
+        download_name='เอกสาร_อัปเดตแล้ว.docx',
         mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     )
 
