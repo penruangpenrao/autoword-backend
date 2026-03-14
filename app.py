@@ -1,12 +1,23 @@
 from flask import Flask, request, send_file, render_template, jsonify
-from flask_cors import CORS
 import docx
 from docx.shared import RGBColor
 import io
 import json
 
 app = Flask(__name__)
-CORS(app)
+
+# ── CORS: เพิ่ม header ทุก response แบบ manual เสถียรกว่า flask-cors ──
+@app.after_request
+def add_cors(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
+@app.route('/analyze', methods=['OPTIONS'])
+@app.route('/generate', methods=['OPTIONS'])
+def handle_options():
+    return '', 204
 
 # 1. ฟังก์ชันเช็คสีแดง
 def is_reddish(run):
