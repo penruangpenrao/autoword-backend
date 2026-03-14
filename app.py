@@ -14,11 +14,6 @@ def add_cors(response):
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
-@app.route('/analyze', methods=['OPTIONS'])
-@app.route('/generate', methods=['OPTIONS'])
-def handle_options():
-    return '', 204
-
 # 1. ฟังก์ชันเช็คสีแดง
 def is_reddish(run):
     if run.font.color and run.font.color.rgb:
