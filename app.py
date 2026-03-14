@@ -80,11 +80,10 @@ def analyze():
 
         for body_child in doc.element.body:
             body_el_page[id(body_child)] = current_page
-            pbreaks = body_child.xpath(
-                './/w:br[@w:type="page"]',
-                namespaces=nsmap
-            )
-            current_page += len(pbreaks)
+            # ใช้ iter() แทน xpath() — ไม่มีปัญหา namespaces argument
+            for br in body_child.iter(qn('w:br')):
+                if br.get(qn('w:type')) == 'page':
+                    current_page += 1
 
         # ── Step 2: หาหน้าของ paragraph โดย walk-up ──
         def page_of(para):
