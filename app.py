@@ -52,32 +52,75 @@ def index():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
+    import traceback
+    from docx.oxml.ns import qn
+
     file = request.files.get('file')
     if not file:
         return jsonify({'error': 'ไม่พบไฟล์'}), 400
 
-    doc = docx.Document(file)
-    normalize_red_runs(doc)
+    try:
+        doc = docx.Document(file)
+        normalize_red_runs(doc)
 
-    red_texts = []
-    seen = set()
+        W_NS   = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+        nsmap  = {'w': W_NS}
+        W_BODY = qn('w:body')
 
-    def extract_from_paragraphs(paragraphs):
-        for p in paragraphs:
-            for run in p.runs:
-                if is_reddish(run):
-                    text = run.text.strip()
-                    if text and text not in seen:
-                        seen.add(text)
-                        red_texts.append(text)
+        # ── Step 1: คำนวณหน้าของแต่ละ body-child element ──
+        # ใช้เฉพาะ hard page break (w:br w:type="page") เท่านั้น — เสถียรกว่า
+        current_page = 1
+        body_el_page = {}
 
-    extract_from_paragraphs(doc.paragraphs)
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                extract_from_paragraphs(cell.paragraphs)
+        for body_child in doc.element.body:
+            body_el_page[id(body_child)] = current_page
+            pbreaks = body_child.xpath(
+                './/w:br[@w:type="page"]',
+                namespaces=nsmap
+            )
+            current_page += len(pbreaks)
 
-    return jsonify({'words': red_texts})
+        # ── Step 2: หาหน้าของ paragraph โดย walk-up ──
+        def page_of(para):
+            el = para._element
+            while el is not None:
+                parent = el.getparent()
+                if parent is not None and parent.tag == W_BODY:
+                    return body_el_page.get(id(el), 1)
+                el = parent
+            return 1
+
+        # ── Step 3: ดึงคำสีแดง + หน้า ──
+        word_pages = {}
+        seen_order = []
+
+        def extract(paragraphs):
+            for p in paragraphs:
+                pg = page_of(p)
+                for run in p.runs:
+                    if is_reddish(run):
+                        text = run.text.strip()
+                        if text:
+                            if text not in word_pages:
+                                word_pages[text] = set()
+                                seen_order.append(text)
+                            word_pages[text].add(pg)
+
+        extract(doc.paragraphs)
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    extract(cell.paragraphs)
+
+        result = [
+            {'word': w, 'pages': sorted(word_pages[w])}
+            for w in seen_order
+        ]
+        return jsonify({'words': result})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': 'เกิดข้อผิดพลาด: ' + str(e)}), 500
 
 @app.route('/generate', methods=['POST'])
 def generate():
